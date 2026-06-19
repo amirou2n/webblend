@@ -2,7 +2,7 @@ const CACHE_NAME = 'webblend-v1';
 const ASSETS = [
     '/',
     '/index.html',
-    '/styles.css',
+    '/style.css',
     '/main.js',
     '/manifest.json'
 ];
