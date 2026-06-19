@@ -1193,67 +1193,94 @@ class WebBlend {
         const url = URL.createObjectURL(file);
         
         document.getElementById('loading').style.display = 'block';
+        document.getElementById('loading').textContent = 'Loading ' + file.name + '...';
 
-        const onLoad = (object) => {
-            let model = object.scene || object;
-            const folder = new THREE.Group();
-            folder.name = file.name.split('.')[0] + " (Import)";
-            folder.userData.isFolder = true;
-            folder.userData.expanded = true;
-
-            model.traverse((child) => {
-                if (child.isMesh) {
-                    const hasTexture = child.material &&
-                        (child.material.map ||
-                         child.material.normalMap ||
-                         child.material.roughnessMap ||
-                         child.material.metalnessMap ||
-                         child.material.aoMap ||
-                         child.material.emissiveMap ||
-                         child.material.alphaMap);
-                    if (hasTexture) {
-                        child.material.side = THREE.DoubleSide;
-                        child.material.transparent = child.material.opacity < 1;
-                        child.material.needsUpdate = true;
-                    } else if (child.material) {
-                        const oldColor = child.material.color ? child.material.color.clone() : new THREE.Color(0xa38c7a);
-                        const oldRoughness = child.material.roughness != null ? child.material.roughness : 0.6;
-                        const oldMetalness = child.material.metalness != null ? child.material.metalness : 0.1;
-                        child.material = this.createExtendedMaterial();
-                        child.material.color.copy(oldColor);
-                        child.material.roughness = oldRoughness;
-                        child.material.metalness = oldMetalness;
-                    }
-                    child.castShadow = true; child.receiveShadow = true;
-                    child.geometry.computeVertexNormals();
-                    this.objects.push(child);
-                }
-            });
-
-            const box = new THREE.Box3().setFromObject(model);
-            const size = box.getSize(new THREE.Vector3());
-            const scale = 4.0 / Math.max(size.x, size.y, size.z); 
-            model.scale.set(scale, scale, scale);
-            model.position.sub(box.getCenter(new THREE.Vector3()).multiplyScalar(scale)); 
-            
-            folder.add(model);
-            this.scene.add(folder);
-            
-            this.pushHistory({
-                type: 'create',
-                uuid: folder.uuid,
-                before: null,
-                after: folder
-            });
-
-            this.selectObject(folder);
-            this.updateOutliner();
+        const onError = (err) => {
+            console.error('[WebBlend] Import error:', err);
             document.getElementById('loading').style.display = 'none';
+            this.showNotification('Import failed: ' + (err.message || err));
         };
 
-        if (ext === 'glb' || ext === 'gltf') new GLTFLoader().load(url, onLoad);
-        else if (ext === 'fbx') new FBXLoader().load(url, onLoad);
-        else if (ext === 'obj') new OBJLoader().load(url, onLoad);
+        const onLoad = (object) => {
+            try {
+                let model = object.scene || object;
+                const folder = new THREE.Group();
+                folder.name = file.name.split('.')[0] + " (Import)";
+                folder.userData.isFolder = true;
+                folder.userData.expanded = true;
+
+                let meshCount = 0;
+                model.traverse((child) => {
+                    if (child.isMesh) {
+                        meshCount++;
+                        const hasTexture = child.material &&
+                            (child.material.map ||
+                             child.material.normalMap ||
+                             child.material.roughnessMap ||
+                             child.material.metalnessMap ||
+                             child.material.aoMap ||
+                             child.material.emissiveMap ||
+                             child.material.alphaMap);
+                        if (hasTexture) {
+                            child.material.side = THREE.DoubleSide;
+                            child.material.transparent = child.material.opacity < 1;
+                            child.material.needsUpdate = true;
+                        } else if (child.material) {
+                            const oldColor = child.material.color ? child.material.color.clone() : new THREE.Color(0xa38c7a);
+                            const oldRoughness = child.material.roughness != null ? child.material.roughness : 0.6;
+                            const oldMetalness = child.material.metalness != null ? child.material.metalness : 0.1;
+                            child.material = this.createExtendedMaterial();
+                            child.material.color.copy(oldColor);
+                            child.material.roughness = oldRoughness;
+                            child.material.metalness = oldMetalness;
+                        }
+                        child.castShadow = true; child.receiveShadow = true;
+                        child.geometry.computeVertexNormals();
+                        this.objects.push(child);
+                    }
+                });
+
+                if (meshCount === 0) throw new Error('No meshes found in file');
+
+                const box = new THREE.Box3().setFromObject(model);
+                const size = box.getSize(new THREE.Vector3());
+                const maxDim = Math.max(size.x, size.y, size.z);
+                if (maxDim > 0) {
+                    const scale = 4.0 / maxDim;
+                    model.scale.set(scale, scale, scale);
+                    model.position.sub(box.getCenter(new THREE.Vector3()).multiplyScalar(scale));
+                }
+                
+                folder.add(model);
+                this.scene.add(folder);
+                
+                this.pushHistory({
+                    type: 'create',
+                    uuid: folder.uuid,
+                    before: null,
+                    after: folder
+                });
+
+                this.selectObject(folder);
+                this.updateOutliner();
+                document.getElementById('loading').style.display = 'none';
+                this.showNotification('Imported: ' + file.name);
+            } catch (e) {
+                onError(e);
+            }
+        };
+
+        try {
+            if (ext === 'glb' || ext === 'gltf') new GLTFLoader().load(url, onLoad, undefined, onError);
+            else if (ext === 'fbx') new FBXLoader().load(url, onLoad, undefined, onError);
+            else if (ext === 'obj') new OBJLoader().load(url, onLoad, undefined, onError);
+            else {
+                document.getElementById('loading').style.display = 'none';
+                this.showNotification('Unsupported format: .' + ext);
+            }
+        } catch (e) {
+            onError(e);
+        }
     }
 
     addPrimitive(type) {
