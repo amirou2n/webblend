@@ -1203,9 +1203,27 @@ class WebBlend {
 
             model.traverse((child) => {
                 if (child.isMesh) {
-                    const newMat = this.createExtendedMaterial();
-                    if(child.material.color) newMat.color.copy(child.material.color);
-                    child.material = newMat;
+                    const hasTexture = child.material &&
+                        (child.material.map ||
+                         child.material.normalMap ||
+                         child.material.roughnessMap ||
+                         child.material.metalnessMap ||
+                         child.material.aoMap ||
+                         child.material.emissiveMap ||
+                         child.material.alphaMap);
+                    if (hasTexture) {
+                        child.material.side = THREE.DoubleSide;
+                        child.material.transparent = child.material.opacity < 1;
+                        child.material.needsUpdate = true;
+                    } else if (child.material) {
+                        const oldColor = child.material.color ? child.material.color.clone() : new THREE.Color(0xa38c7a);
+                        const oldRoughness = child.material.roughness != null ? child.material.roughness : 0.6;
+                        const oldMetalness = child.material.metalness != null ? child.material.metalness : 0.1;
+                        child.material = this.createExtendedMaterial();
+                        child.material.color.copy(oldColor);
+                        child.material.roughness = oldRoughness;
+                        child.material.metalness = oldMetalness;
+                    }
                     child.castShadow = true; child.receiveShadow = true;
                     child.geometry.computeVertexNormals();
                     this.objects.push(child);
