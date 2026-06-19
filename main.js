@@ -78,15 +78,21 @@ class WebBlend {
 
     init() {
         const container = document.getElementById('viewport');
+        if (!container) throw new Error('Viewport element not found');
+
+        let w = container.clientWidth || 800;
+        let h = container.clientHeight || 600;
+        if (w < 10) w = 800;
+        if (h < 10) h = 600;
 
         this.scene = new THREE.Scene();
         this.scene.name = "Scene Root";
 
-        this.camera = new THREE.PerspectiveCamera(50, container.clientWidth / container.clientHeight, 0.1, 1000);
+        this.camera = new THREE.PerspectiveCamera(50, w / h, 0.1, 1000);
         this.camera.position.set(0, 2, 8);
 
         this.renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true, powerPreference: "high-performance", preserveDrawingBuffer: true });
-        this.renderer.setSize(container.clientWidth, container.clientHeight);
+        this.renderer.setSize(w, h);
         this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
         this.renderer.shadowMap.enabled = true;
         this.renderer.shadowMap.type = THREE.PCFSoftShadowMap;
@@ -2178,4 +2184,11 @@ class WebBlend {
     }
 }
 
-window.onload = () => { const app = new WebBlend(); };
+try {
+    const app = new WebBlend();
+    window.__webblend = app;
+} catch (e) {
+    console.error('[WebBlend] Init error:', e);
+    document.getElementById('loading').textContent = 'Error: ' + e.message;
+    document.getElementById('loading').style.background = '#aa0000b3';
+}
