@@ -1,0 +1,342 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>WebBlend - Professional Studio</title>
+    <!-- Corrected style link: style.css -->
+    <link rel="stylesheet" href="style.css">
+    <script type="importmap">
+        {
+            "imports": {
+                "three": "https://unpkg.com/three@0.160.0/build/three.module.js",
+                "three/addons/": "https://unpkg.com/three@0.160.0/examples/jsm/"
+            }
+        }
+    </script>
+</head>
+<body>
+    <div id="app">
+        <!-- Top Bar -->
+        <header id="top-bar">
+            <img src="data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><circle cx='50' cy='50' r='40' fill='%23ea7600'/><circle cx='35' cy='50' r='15' fill='white'/></svg>" width="18" height="18" alt="Logo">
+            <div class="menu-item">File
+                <div class="dropdown">
+                    <a href="#" id="menu-new">New</a>
+                    <a href="#" id="menu-save-project">Save Project (.webblend)</a>
+                    <a href="#" id="menu-load-project">Load Project</a>
+                    <div class="dropdown-divider"></div>
+                    <a href="#" id="menu-import">Import (FBX, OBJ, GLB)</a>
+                    <a href="#" id="menu-import-reference">Import Reference Image</a>
+                    <div class="dropdown-divider"></div>
+                    <a href="#" id="menu-export-glb">Export GLB</a>
+                    <a href="#" id="menu-export-obj">Export OBJ</a>
+                </div>
+            </div>
+            <div class="menu-item">Edit
+                <div class="dropdown">
+                    <a href="#" id="menu-undo">Undo (Ctrl+Z)</a>
+                    <a href="#" id="menu-redo">Redo (Ctrl+Y)</a>
+                    <div class="dropdown-divider"></div>
+                    <a href="#" id="menu-copy">Copy (Ctrl+C)</a>
+                    <a href="#" id="menu-paste">Paste (Ctrl+V)</a>
+                    <a href="#" id="menu-select-all">Select All (A)</a>
+                    <div class="dropdown-divider"></div>
+                    <a href="#" id="menu-prefs">Preferences</a>
+                </div>
+            </div>
+            <div class="menu-item">Add
+                <div class="dropdown">
+                    <a href="#" class="add-mesh" data-type="cube">Mesh: Cube</a>
+                    <a href="#" class="add-mesh" data-type="sphere">Mesh: UV Sphere</a>
+                    <a href="#" class="add-mesh" data-type="cylinder">Mesh: Cylinder</a>
+                    <a href="#" class="add-mesh" data-type="plane">Mesh: Plane</a>
+                    <div class="dropdown-divider"></div>
+                    <a href="#" id="menu-add-camera">Scene Camera</a>
+                    <a href="#" id="menu-add-armature">Skeletal Armature</a>
+                </div>
+            </div>
+            <div class="menu-item">Render
+                <div class="dropdown">
+                    <a href="#" id="menu-render-prev">Render Image (Preview)</a>
+                    <a href="#" id="menu-render-hd">Render Image (HD Quality)</a>
+                    <a href="#" id="menu-render-animation">Export Animation (MP4)</a>
+                </div>
+            </div>
+        </header>
+
+        <!-- Tool Settings -->
+        <header id="tool-settings">
+            <div class="mode-selector">
+                <select id="mode-select">
+                    <option value="object" selected>Object Mode</option>
+                    <option value="sculpt">Sculpt Mode</option>
+                    <option value="edit">Edit Mode</option>
+                    <option value="animation">Animation Mode</option>
+                </select>
+            </div>
+            <div class="slider-group sculpt-only hidden">
+                <label>Radius</label><input type="range" id="top-radius" min="0.1" max="5" step="0.1" value="1">
+            </div>
+            <div class="slider-group sculpt-only hidden">
+                <label>Strength</label><input type="range" id="top-strength" min="0.01" max="1" step="0.01" value="0.4">
+            </div>
+            <button id="btn-camera-view" class="ui-btn" style="margin-left: auto;">🎥 View Through Camera</button>
+        </header>
+
+        <div id="workspace">
+            <!-- Left Toolbar -->
+            <aside id="toolbar">
+                <button class="tool-btn obj-tool" data-tool="select" title="Select">🖱️</button>
+                <button class="tool-btn obj-tool" data-tool="translate" title="Move (G)">↔</button>
+                <button class="tool-btn obj-tool" data-tool="rotate" title="Rotate (R)">↻</button>
+                <button class="tool-btn obj-tool" data-tool="scale" title="Scale (S)">⤢</button>
+                
+                <button class="tool-btn sculpt-tool active hidden" data-tool="sculpt-draw" title="Draw Brush">🖌️</button>
+                <button class="tool-btn sculpt-tool hidden" data-tool="sculpt-smooth" title="Smooth Brush">💧</button>
+                <button class="tool-btn sculpt-tool hidden" data-tool="sculpt-flatten" title="Flatten Brush">🔨</button>
+            </aside>
+
+            <!-- Center column: Contains Viewport on top and Timeline scrubber dock below -->
+            <div id="center-column" style="display: flex; flex-direction: column; flex: 1; min-width: 0;">
+                <main id="viewport">
+                    <div id="loading">Initializing Engine...</div>
+                    <div id="viewport-banner" class="hidden" style="position: absolute; bottom: 20px; left: 50%; transform: translateX(-50%); background: rgba(0,0,0,0.85); color: #fff; padding: 6px 15px; border-radius: 4px; font-weight: bold; pointer-events: none; z-index: 20; border: 1px solid var(--border-light); font-size: 11px;"></div>
+                </main>
+
+                <!-- ⏱️ Timeline Bottom Dock -->
+                <footer id="timeline-dock" class="hidden">
+                    <div id="timeline-header">
+                        <button class="timeline-control-btn" id="btn-anim-first" title="Jump to Start">⏮</button>
+                        <button class="timeline-control-btn" id="btn-anim-prev" title="Previous Frame">⏴</button>
+                        <button class="timeline-control-btn" id="btn-anim-play" title="Play / Pause">▶</button>
+                        <button class="timeline-control-btn" id="btn-anim-next" title="Next Frame">⏵</button>
+                        <button class="timeline-control-btn" id="btn-anim-last" title="Jump to End">⏭</button>
+
+                        <button id="btn-auto-key" class="timeline-control-btn" style="color: #ff5555; font-weight: bold;" title="Toggle Auto Keyframe Mode">🔴 Auto Key</button>
+
+                        <div class="timeline-numeric-input">
+                            <label>Frame</label>
+                            <input type="number" id="anim-current-frame" value="0">
+                        </div>
+                        <div class="timeline-numeric-input">
+                            <label>Start</label>
+                            <input type="number" id="anim-start-frame" value="0">
+                        </div>
+                        <div class="timeline-numeric-input">
+                            <label>End</label>
+                            <input type="number" id="anim-end-frame" value="250">
+                        </div>
+                        <div class="timeline-numeric-input">
+                            <label>FPS</label>
+                            <input type="number" id="anim-fps" value="30">
+                        </div>
+                        
+                        <div class="timeline-numeric-input">
+                            <label>Interpolation</label>
+                            <select id="anim-interpolation" style="padding: 1px 4px; height: 18px; font-size: 10px;">
+                                <option value="linear" selected>Linear</option>
+                                <option value="bezier">Bezier</option>
+                                <option value="constant">Constant</option>
+                            </select>
+                        </div>
+                    </div>
+
+                    <div id="timeline-scrubber-container">
+                        <!-- Keyframe Diamond Track -->
+                        <div id="timeline-keyframe-track"></div>
+                        <input type="range" id="timeline-slider" min="0" max="250" value="0">
+                    </div>
+                </footer>
+            </div>
+
+            <!-- Right Sidebar -->
+            <aside id="sidebar">
+                <!-- Top Section: Outliner -->
+                <div id="sidebar-outliner-section">
+                    <div class="sidebar-header">
+                        Scene Collection
+                        <button class="ui-btn" id="btn-add-folder" title="New Folder">📁+</button>
+                    </div>
+                    <div class="panel outliner-panel-wrapper">
+                        <ul id="outliner"></ul>
+                    </div>
+                </div>
+
+                <!-- Bottom Section: Properties Inspector -->
+                <div id="sidebar-properties-section">
+                    <div class="sidebar-header obj-tool">Properties</div>
+                    <div id="properties-scroll-container">
+                        <div class="panel obj-tool">
+                            <h3>Object Details</h3>
+                            <div class="prop-group"><label>Name</label><input type="text" id="obj-name"></div>
+                            <div class="prop-group"><label>Visible</label><input type="checkbox" id="obj-visible" checked></div>
+                            <div class="prop-group"><label>Wireframe</label><input type="checkbox" id="obj-wireframe"></div>
+                            <div class="prop-group"><label>Cast Shadow</label><input type="checkbox" id="obj-shadow" checked></div>
+                            <div class="prop-group"><label>Smooth Shading</label><input type="checkbox" id="obj-smooth" checked></div>
+                        </div>
+
+                        <div class="panel obj-tool">
+                            <h3>Transform</h3>
+                            <div class="prop-group"><label>Loc X</label><input type="number" id="loc-x" step="0.1" value="0"></div>
+                            <div class="prop-group"><label>Loc Y</label><input type="number" id="loc-y" step="0.1" value="0"></div>
+                            <div class="prop-group"><label>Loc Z</label><input type="number" id="loc-z" step="0.1" value="0"></div>
+                        </div>
+
+                        <!-- 🎥 Camera Properties Section -->
+                        <div class="panel obj-tool camera-only hidden">
+                            <h3>Camera Lens Properties</h3>
+                            <div class="prop-group"><label>Field of View</label><input type="number" id="cam-fov" min="10" max="150" step="1" value="50"></div>
+                            <div class="prop-group"><label>Near Clip</label><input type="number" id="cam-near" min="0.01" max="10" step="0.05" value="0.1"></div>
+                            <div class="prop-group"><label>Far Clip</label><input type="number" id="cam-far" min="10" max="10000" step="10" value="1000"></div>
+                            <button id="sidebar-btn-cam-view" class="ui-btn" style="width: 100%; margin-top: 5px;">🎥 View Through Camera</button>
+                        </div>
+
+                        <!-- 🖼️ Reference Image Properties Section -->
+                        <div class="panel obj-tool reference-image-only hidden">
+                            <h3>Reference Image Properties</h3>
+                            <div class="prop-group"><label>Opacity</label><input type="number" id="ref-opacity" min="0" max="1" step="0.05" value="1.0"></div>
+                            <div class="prop-group"><label>Brightness</label><input type="number" id="ref-brightness" min="-1" max="1" step="0.05" value="0.0"></div>
+                            <div class="prop-group"><label>Contrast</label><input type="number" id="ref-contrast" min="0" max="3" step="0.05" value="1.0"></div>
+                            <div class="prop-group"><label>Double-Sided</label><input type="checkbox" id="ref-double-sided" checked></div>
+                            <div class="prop-group"><label>Lock Selection</label><input type="checkbox" id="ref-lock"></div>
+                            <div class="prop-group" style="display: flex; gap: 4px; flex-wrap: wrap; margin-top: 10px;">
+                                <button class="ui-btn ref-align-btn" data-axis="front" style="flex: 1; min-width: 60px;">Front</button>
+                                <button class="ui-btn ref-align-btn" data-axis="side" style="flex: 1; min-width: 60px;">Side</button>
+                                <button class="ui-btn ref-align-btn" data-axis="top" style="flex: 1; min-width: 60px;">Top</button>
+                                <button class="ui-btn ref-align-btn" data-axis="back" style="flex: 1; min-width: 60px;">Back</button>
+                            </div>
+                        </div>
+
+                        <!-- Standard Mesh Material Properties -->
+                        <div class="panel obj-tool material-panel">
+                            <h3>Material Properties</h3>
+                            <div class="prop-group"><label>Base Color</label><input type="color" id="mat-color" value="#a38c7a"></div>
+                            <div class="prop-group"><label>Roughness</label><input type="number" id="mat-roughness" min="0" max="1" step="0.05" value="0.6"></div>
+                            <div class="prop-group"><label>Metallic</label><input type="number" id="mat-metallic" min="0" max="1" step="0.05" value="0.1"></div>
+                            <div class="prop-group"><label>Emission</label><input type="color" id="mat-emissive" value="#000000"></div>
+                            <div class="prop-group"><label>Opacity</label><input type="number" id="mat-opacity" min="0" max="1" step="0.05" value="1.0"></div>
+                            <div class="prop-group"><label>Transmission</label><input type="number" id="mat-transmission" min="0" max="1" step="0.05" value="0.0" title="Glass effect"></div>
+                            <div class="prop-group"><label>IOR</label><input type="number" id="mat-ior" min="1.0" max="2.5" step="0.05" value="1.5" title="Index of Refraction"></div>
+                            <div class="prop-group"><label>IOU</label><input type="number" id="mat-iou" min="0" max="1" step="0.05" value="0.0" title="IOU Property"></div>
+                        </div>
+
+                        <div class="panel obj-tool">
+                            <h3>Scene Lighting</h3>
+                            <div class="prop-group"><label>Directional Int.</label><input type="number" id="light-dir-int" min="0" step="0.1" value="2.0"></div>
+                            <div class="prop-group"><label>Ambient Int.</label><input type="number" id="light-amb-int" min="0" step="0.1" value="0.4"></div>
+                            <div class="prop-group"><label>Shadows</label><input type="checkbox" id="light-shadows" checked></div>
+                        </div>
+
+                        <div class="panel sculpt-only hidden">
+                            <h3>Brush Settings</h3>
+                            <div class="prop-group"><label>Radius</label><input type="number" id="side-radius" step="0.1" value="1.0"></div>
+                            <div class="prop-group"><label>Strength</label><input type="number" id="side-strength" step="0.01" value="0.4"></div>
+                        </div>
+                    </div>
+                </div>
+            </aside>
+        </div>
+    </div>
+
+    <!-- Right-click Custom Context Menu for Outliner Cameras -->
+    <div id="outliner-context-menu" class="hidden" style="position: absolute; background: var(--bg-panel); border: 1px solid var(--border-light); z-index: 3000; border-radius: 4px; padding: 4px 0; min-width: 150px; box-shadow: 0 4px 8px rgba(0,0,0,0.4);">
+        <a href="#" id="context-set-active-camera" style="color: var(--text-main); text-decoration: none; padding: 6px 12px; display: block; font-size: 11px;">🎥 Set As Active Camera</a>
+    </div>
+
+    <!-- Preferences Modal -->
+    <div id="prefs-modal" class="modal-overlay">
+        <div class="modal">
+            <div class="modal-header">Preferences <span class="modal-close" id="close-prefs">✖</span></div>
+            <div class="modal-body">
+                <div class="modal-section">
+                    <h4>UI Settings</h4>
+                    <div class="prop-group"><label>Compact Mode</label><input type="checkbox" id="pref-compact"></div>
+                    <div class="prop-group"><label>Panel Opacity</label><input type="range" id="pref-opacity" min="0.5" max="1.0" step="0.05"></div>
+                    <div class="prop-group"><label>Font Size</label><input type="number" id="pref-font" min="10" max="18" step="1"></div>
+                </div>
+                <!-- 🎥 Camera Rendering Preferences -->
+                <div class="modal-section">
+                    <h4>Rendering</h4>
+                    <div class="prop-group">
+                        <label style="width: 140px;">Render Camera</label>
+                        <select id="pref-render-source">
+                            <option value="active_scene_camera">Active Scene Camera</option>
+                            <option value="current_viewport">Current Viewport</option>
+                        </select>
+                    </div>
+                </div>
+                <!-- 🌐 Grid Customization Preferences -->
+                <div class="modal-section">
+                    <h4>Grid Preferences</h4>
+                    <div class="prop-group">
+                        <label>Grid Size</label>
+                        <select id="pref-grid-size">
+                            <option value="10">10m</option>
+                            <option value="20" selected>20m</option>
+                            <option value="50">50m</option>
+                            <option value="100">100m</option>
+                            <option value="250">250m</option>
+                            <option value="500">500m</option>
+                        </select>
+                    </div>
+                    <div class="prop-group">
+                        <label>Divisions</label>
+                        <select id="pref-grid-divisions">
+                            <option value="10">10</option>
+                            <option value="20" selected>20</option>
+                            <option value="50">50</option>
+                            <option value="100">100</option>
+                        </select>
+                    </div>
+                    <div class="prop-group">
+                        <label>Main Line</label>
+                        <input type="color" id="pref-grid-main-color" value="#444444">
+                    </div>
+                    <div class="prop-group">
+                        <label>Sub Lines</label>
+                        <input type="color" id="pref-grid-sub-color" value="#222222">
+                    </div>
+                    <div class="prop-group">
+                        <label>Opacity</label>
+                        <input type="range" id="pref-grid-opacity" min="0" max="1" step="0.05" value="0.5">
+                    </div>
+                    <div class="prop-group">
+                        <label>Thickness</label>
+                        <select id="pref-grid-thickness">
+                            <option value="thin">Thin</option>
+                            <option value="normal" selected>Normal</option>
+                            <option value="thick">Thick</option>
+                        </select>
+                    </div>
+                    <div class="prop-group">
+                        <label>Infinite Grid</label>
+                        <input type="checkbox" id="pref-infinite-grid" checked>
+                    </div>
+                </div>
+                <div class="modal-section">
+                    <h4>Keybinds Overview</h4>
+                    <p>
+                        <b>G</b> : Move<br>
+                        <b>R</b> : Rotate<br>
+                        <b>S</b> : Scale<br>
+                        <b>I</b> : Insert Keyframe manually<br>
+                        <b>A</b> : Select All / None<br>
+                        <b>Ctrl + Numpad 0</b> : Toggle Active Camera View<br>
+                        <b>Ctrl + Z</b> : Undo Action<br>
+                        <b>Ctrl + Y</b> : Redo Action<br>
+                        <b>Ctrl + C</b> : Copy Object<br>
+                        <b>Ctrl + V</b> : Paste Object<br>
+                        <b>Delete/Bksp</b> : Delete Object
+                    </p>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <input type="file" id="file-import-input" accept=".glb,.gltf,.fbx,.obj">
+    <input type="file" id="image-import-input" accept=".png,.jpg,.jpeg,.webp,.bmp" style="display: none;">
+    <input type="file" id="project-load-input" accept=".webblend">
+    <script type="module" src="main.js"></script>
+</body>
+</html>
