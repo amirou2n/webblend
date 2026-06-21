@@ -1988,6 +1988,15 @@ class WebBlend {
     setupUI() {
         document.getElementById('mode-select').addEventListener('change', e => { this.currentMode = e.target.value; this.updateUIMode(); });
 
+        // Helper: sync slider + number input (hoisted before all uses)
+        const bindSlider = (sliderId, numId, onChange) => {
+            const slider = document.getElementById(sliderId);
+            const num = document.getElementById(numId);
+            if (!slider || !num) return;
+            slider.addEventListener('input', () => { num.value = slider.value; onChange(parseFloat(slider.value)); });
+            num.addEventListener('input', () => { slider.value = num.value; onChange(parseFloat(num.value)); });
+        };
+
         const modal = document.getElementById('prefs-modal');
         document.getElementById('menu-prefs').addEventListener('click', () => modal.style.display = 'flex');
         document.getElementById('close-prefs').addEventListener('click', () => modal.style.display = 'none');
@@ -2396,15 +2405,6 @@ class WebBlend {
 
         // Subdivide button
         document.getElementById('btn-subdivide')?.addEventListener('click', () => { this.subdivideActiveMesh(); });
-
-        // Helper: sync slider + number input
-        const bindSlider = (sliderId, numId, onChange) => {
-            const slider = document.getElementById(sliderId);
-            const num = document.getElementById(numId);
-            if (!slider || !num) return;
-            slider.addEventListener('input', () => { num.value = slider.value; onChange(parseFloat(slider.value)); });
-            num.addEventListener('input', () => { slider.value = num.value; onChange(parseFloat(num.value)); });
-        };
 
         bindSlider('light-dir-int', 'light-dir-int-num', v => { this.lights.directional.intensity = v; });
         bindSlider('light-amb-int', 'light-amb-int-num', v => { this.lights.ambient.intensity = v; });
