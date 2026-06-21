@@ -4,10 +4,11 @@ import { TransformControls } from 'three/addons/controls/TransformControls.js';
 import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
 
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
-import { FBXLoader } from 'three/addons/loaders/FBXLoader.js';
+import { FBXLoader } from './loaders/FBXLoader.js';
 import { OBJLoader } from 'three/addons/loaders/OBJLoader.js';
 import { GLTFExporter } from 'three/addons/exporters/GLTFExporter.js';
 import { OBJExporter } from 'three/addons/exporters/OBJExporter.js';
+import { ViewHelper } from 'three/addons/helpers/ViewHelper.js';
 
 class WebBlend {
     constructor() {
@@ -29,6 +30,12 @@ class WebBlend {
         this.brushRadius = 1.0;
         this.brushStrength = 0.4;
         this.brushType = 'sculpt-draw';
+        this.brushPreview = null;
+        this.sculptIntersect = null;
+        this.sculptGrabStart = null;
+        this.sculptMirrorVec = new THREE.Vector3();
+        this.symmetryAxis = 'none';
+        this._adjacencyCache = new Map();
 
         // Camera View Mode State
         this.isViewingThroughCamera = false;
@@ -52,14 +59,7 @@ class WebBlend {
 
         this.notificationTimeout = null;
 
-        // Safe Load Prefs
-        let savedPrefs = null;
-        try {
-            savedPrefs = JSON.parse(localStorage.getItem('wb_prefs'));
-        } catch (e) {
-            console.warn("Could not parse saved preferences:", e);
-        }
-        this.prefs = savedPrefs || {
+        const defaultPrefs = {
             compactMode: false,
             opacity: 1.0,
             fontSize: 11,
@@ -70,8 +70,29 @@ class WebBlend {
             gridSubColor: '#222222',
             gridOpacity: 0.5,
             gridThickness: 'normal',
-            infiniteGrid: true
+            infiniteGrid: true,
+            cameraSpeed: 5.0,
+            animFps: 30,
+            keybinds: {
+                forward: ['KeyW', 'ArrowUp'],
+                backward: ['KeyS', 'ArrowDown'],
+                left: ['KeyA', 'ArrowLeft'],
+                right: ['KeyD', 'ArrowRight'],
+                up: ['KeyQ'],
+                down: ['KeyE'],
+                boost: ['ShiftLeft', 'ShiftRight']
+            }
         };
+        // Safe Load Prefs with defaults merge
+        let savedPrefs = null;
+        try {
+            savedPrefs = JSON.parse(localStorage.getItem('wb_prefs'));
+        } catch (e) {
+            console.warn("Could not parse saved preferences:", e);
+        }
+        this.prefs = savedPrefs ? { ...defaultPrefs, ...savedPrefs, keybinds: { ...defaultPrefs.keybinds, ...(savedPrefs.keybinds || {}) } } : { ...defaultPrefs };
+
+        this.keys = new Set();
 
         this.init();
     }
@@ -97,6 +118,29 @@ class WebBlend {
         this.renderer.shadowMap.enabled = true;
         this.renderer.shadowMap.type = THREE.PCFSoftShadowMap;
         container.appendChild(this.renderer.domElement);
+
+        // Axis gizmo (ViewHelper)
+        this.viewHelper = new ViewHelper(this.camera, this.renderer.domElement);
+        this.renderer.domElement.addEventListener('pointerdown', (e) => {
+            if (this.viewHelper.handleClick(e)) e.stopPropagation();
+        });
+
+        // Brush preview ring
+        const ringGeo = new THREE.RingGeometry(0.85, 1.0, 48);
+        const ringMat = new THREE.MeshBasicMaterial({
+            color: 0x00aaff, side: THREE.DoubleSide, transparent: true, opacity: 0.5, depthTest: false
+        });
+        this.brushPreview = new THREE.Mesh(ringGeo, ringMat);
+        this.brushPreview.visible = false;
+        this.brushPreview.renderOrder = 999;
+        this.scene.add(this.brushPreview);
+        // also add a small dot at center
+        const dotGeo = new THREE.CircleGeometry(0.04, 12);
+        const dotMat = new THREE.MeshBasicMaterial({ color: 0x00aaff, depthTest: false, transparent: true, opacity: 0.6 });
+        this.brushDot = new THREE.Mesh(dotGeo, dotMat);
+        this.brushDot.visible = false;
+        this.brushDot.renderOrder = 999;
+        this.scene.add(this.brushDot);
 
         const pmremGenerator = new THREE.PMREMGenerator(this.renderer);
         this.scene.environment = pmremGenerator.fromScene(new RoomEnvironment(this.renderer), 0.04).texture;
@@ -164,6 +208,8 @@ class WebBlend {
         container.addEventListener('pointerdown', (e) => this.onPointerDown(e));
         container.addEventListener('pointermove', (e) => this.onPointerMove(e));
         container.addEventListener('pointerup', () => this.onPointerUp());
+        window.addEventListener('keydown', (e) => { if (e.target.tagName !== 'INPUT' && e.target.tagName !== 'TEXTAREA') this.keys.add(e.code); });
+        window.addEventListener('keyup', (e) => { if (e.target.tagName !== 'INPUT' && e.target.tagName !== 'TEXTAREA') this.keys.delete(e.code); });
         
         this.applyPreferences();
         this.setupUI();
@@ -177,7 +223,7 @@ class WebBlend {
         document.getElementById('loading').style.display = 'none';
         this.updateUIMode();
 
-        this.renderer.setAnimationLoop(() => this.render());
+        this.renderer.setAnimationLoop((t) => this.render(t));
     }
 
     applyPreferences() {
@@ -867,6 +913,19 @@ class WebBlend {
         }
     }
 
+    // --- 💾 Download helper (mobile-friendly) ---
+    downloadBlob(blob, filename) {
+        const link = document.createElement('a');
+        link.href = URL.createObjectURL(blob);
+        link.download = filename;
+        document.body.appendChild(link);
+        link.click();
+        setTimeout(() => {
+            document.body.removeChild(link);
+            URL.revokeObjectURL(link.href);
+        }, 1000);
+    }
+
     // --- PROJECT SAVE & LOAD ---
     saveProject() {
         const projectData = {
@@ -876,15 +935,7 @@ class WebBlend {
 
         const jsonString = JSON.stringify(projectData);
         const blob = new Blob([jsonString], { type: 'application/json' });
-        const link = document.createElement('a');
-        link.style.display = 'none';
-        link.href = URL.createObjectURL(blob);
-        link.download = `project_${new Date().getTime()}.webblend`;
-        
-        // Append anchor strictly to document body to trigger download context safely
-        document.body.appendChild(link);
-        link.click();
-        document.body.removeChild(link);
+        this.downloadBlob(blob, `project_${new Date().getTime()}.webblend`);
     }
 
     loadProject(file) {
@@ -1224,6 +1275,7 @@ class WebBlend {
                         if (hasTexture) {
                             child.material.side = THREE.DoubleSide;
                             child.material.transparent = child.material.opacity < 1;
+                            child.material.color.set(0xffffff);
                             child.material.needsUpdate = true;
                         } else if (child.material) {
                             const oldColor = child.material.color ? child.material.color.clone() : new THREE.Color(0xa38c7a);
@@ -1407,10 +1459,20 @@ class WebBlend {
         this.mouse.y = -((event.clientY - rect.top) / rect.height) * 2 + 1;
 
         if (this.currentMode === 'sculpt' && this.activeObject && this.activeObject.isMesh && !this.activeObject.userData.isReferenceImage) {
-            this.isSculpting = true; 
-            this.orbit.enabled = false; 
+            this.isSculpting = true;
+            this.orbit.enabled = false;
             this.sculptStartPositions = this.activeObject.geometry.attributes.position.array.slice();
-            this.sculptStep(); 
+            // Fresh raycast for sculpt start
+            this.raycaster.setFromCamera(this.mouse, this.camera);
+            const hit = this.raycaster.intersectObject(this.activeObject);
+            if (hit.length > 0) {
+                this.sculptIntersect = hit[0];
+                this.updateBrushPreview(hit[0]);
+                if (this.brushType === 'sculpt-grab') {
+                    this.sculptGrabStart = hit[0].point.clone();
+                }
+            }
+            this.sculptStep(event);
             return;
         }
 
@@ -1448,11 +1510,29 @@ class WebBlend {
     }
 
     onPointerMove(event) {
-        if (!this.isSculpting) return;
         const rect = this.renderer.domElement.getBoundingClientRect();
         this.mouse.x = ((event.clientX - rect.left) / rect.width) * 2 - 1;
         this.mouse.y = -((event.clientY - rect.top) / rect.height) * 2 + 1;
-        this.sculptStep();
+
+        if (this.currentMode === 'sculpt' && this.activeObject && this.activeObject.isMesh && !this.activeObject.userData.isReferenceImage) {
+            // Update brush preview
+            this.raycaster.setFromCamera(this.mouse, this.camera);
+            const hit = this.raycaster.intersectObject(this.activeObject);
+            if (hit.length > 0) {
+                this.sculptIntersect = hit[0];
+                this.updateBrushPreview(hit[0]);
+                const vp = document.getElementById('viewport');
+                if (this.currentMode === 'sculpt') vp.classList.add('sculpt-mode');
+            } else {
+                this.brushPreview.visible = false;
+                this.brushDot.visible = false;
+                this.sculptIntersect = null;
+                document.getElementById('viewport').classList.remove('sculpt-mode');
+            }
+        }
+
+        if (!this.isSculpting) return;
+        this.sculptStep(event);
     }
 
     onPointerUp() {
@@ -1474,36 +1554,297 @@ class WebBlend {
         }
     }
 
-    sculptStep() {
+    updateBrushPreview(hit) {
+        if (!hit) { this.brushPreview.visible = false; this.brushDot.visible = false; return; }
+        const scale = this.brushRadius * 2;
+        this.brushPreview.position.copy(hit.point);
+        this.brushPreview.scale.set(scale, scale, scale);
+        this.brushPreview.lookAt(hit.point.clone().add(hit.face.normal));
+        this.brushPreview.visible = true;
+        this.brushDot.position.copy(hit.point);
+        this.brushDot.visible = true;
+    }
+
+    buildAdjacency(geom) {
+        const key = geom.uuid || geom.id;
+        if (this._adjacencyCache.has(key)) return this._adjacencyCache.get(key);
+        const adj = new Map();
+        const pos = geom.attributes.position;
+        const idx = geom.index;
+        if (idx) {
+            for (let i = 0; i < idx.count; i += 3) {
+                const a = idx.getX(i), b = idx.getX(i+1), c = idx.getX(i+2);
+                if (!adj.has(a)) adj.set(a, new Set());
+                if (!adj.has(b)) adj.set(b, new Set());
+                if (!adj.has(c)) adj.set(c, new Set());
+                adj.get(a).add(b); adj.get(a).add(c);
+                adj.get(b).add(a); adj.get(b).add(c);
+                adj.get(c).add(a); adj.get(c).add(b);
+            }
+        } else {
+            // non-indexed geometry: treat vertices in groups of 3 as triangles
+            for (let i = 0; i < pos.count; i += 3) {
+                const a = i, b = i+1, c = i+2;
+                if (!adj.has(a)) adj.set(a, new Set());
+                if (!adj.has(b)) adj.set(b, new Set());
+                if (!adj.has(c)) adj.set(c, new Set());
+                adj.get(a).add(b); adj.get(a).add(c);
+                adj.get(b).add(a); adj.get(b).add(c);
+                adj.get(c).add(a); adj.get(c).add(b);
+            }
+        }
+        this._adjacencyCache.set(key, adj);
+        return adj;
+    }
+
+    clearAdjacencyCache() {
+        this._adjacencyCache.clear();
+    }
+
+    subdivideActiveMesh() {
+        if (!this.activeObject || !this.activeObject.isMesh) return;
+        const geom = this.activeObject.geometry;
+        const pos = geom.attributes.position;
+        const idx = geom.index;
+        if (!idx) return; // needs indexed geometry
+
+        const newPositions = [];
+        const newIndices = [];
+
+        for (let i = 0; i < idx.count; i += 3) {
+            const a = idx.getX(i), b = idx.getX(i+1), c = idx.getX(i+2);
+            const va = new THREE.Vector3().fromBufferAttribute(pos, a);
+            const vb = new THREE.Vector3().fromBufferAttribute(pos, b);
+            const vc = new THREE.Vector3().fromBufferAttribute(pos, c);
+
+            const vab = va.clone().lerp(vb, 0.5);
+            const vbc = vb.clone().lerp(vc, 0.5);
+            const vca = vc.clone().lerp(va, 0.5);
+
+            const base = newPositions.length / 3;
+            newPositions.push(va.x, va.y, va.z);
+            newPositions.push(vb.x, vb.y, vb.z);
+            newPositions.push(vc.x, vc.y, vc.z);
+            newPositions.push(vab.x, vab.y, vab.z);
+            newPositions.push(vbc.x, vbc.y, vbc.z);
+            newPositions.push(vca.x, vca.y, vca.z);
+
+            // 4 triangles per original triangle
+            newIndices.push(base+0, base+3, base+5);
+            newIndices.push(base+3, base+1, base+4);
+            newIndices.push(base+5, base+4, base+2);
+            newIndices.push(base+3, base+4, base+5);
+        }
+
+        const newGeom = new THREE.BufferGeometry();
+        newGeom.setAttribute('position', new THREE.Float32BufferAttribute(newPositions, 3));
+        newGeom.setIndex(newIndices);
+        newGeom.computeVertexNormals();
+
+        this.activeObject.geometry = newGeom;
+        this.clearAdjacencyCache();
+        this.sculptStartPositions = newGeom.attributes.position.array.slice();
+        // Scale brush radius down for subdivided mesh
+        this.brushRadius = Math.max(this.brushRadius * 0.6, 0.05);
+        const radEl = document.getElementById('top-radius');
+        if (radEl) { radEl.value = this.brushRadius; document.getElementById('side-radius').value = this.brushRadius; }
+        this.showNotification('Mesh subdivided (4× faces)');
+    }
+
+    applySymmetry(localPos, mirrorAxis) {
+        if (mirrorAxis === 'none') return null;
+        const mirrored = localPos.clone();
+        mirrored[mirrorAxis] = -mirrored[mirrorAxis];
+        return mirrored;
+    }
+
+    sculptStep(event) {
         if(!this.activeObject || !this.activeObject.isMesh || this.activeObject.userData.isReferenceImage) return;
-        this.raycaster.setFromCamera(this.mouse, this.camera);
-        const intersects = this.raycaster.intersectObject(this.activeObject);
-        if (intersects.length > 0) {
-            const point = intersects[0].point;
-            const geom = this.activeObject.geometry;
-            const positions = geom.attributes.position;
-            const invMat = this.activeObject.matrixWorld.clone().invert();
-            const localPoint = point.clone().applyMatrix4(invMat);
-            const radiusSq = this.brushRadius * this.brushRadius;
-            
+        
+        // Use cached intersect if available (from pointer move preview), else raycast fresh
+        let intersect = this.sculptIntersect;
+        if (!intersect) {
+            this.raycaster.setFromCamera(this.mouse, this.camera);
+            const hits = this.raycaster.intersectObject(this.activeObject);
+            if (hits.length === 0) return;
+            intersect = hits[0];
+        }
+        
+        const geom = this.activeObject.geometry;
+        const positions = geom.attributes.position;
+        const normals = geom.attributes.normal;
+        if (!normals) return;
+        
+        const invMat = this.activeObject.matrixWorld.clone().invert();
+        const localPoint = intersect.point.clone().applyMatrix4(invMat);
+        const localNormal = intersect.face.normal.clone().applyQuaternion(this.activeObject.quaternion).normalize();
+        const radiusSq = this.brushRadius * this.brushRadius;
+        const strength = this.brushStrength;
+        const brushType = this.brushType;
+        
+        // Grab brush needs mouse delta
+        let grabDelta = null;
+        if (brushType === 'sculpt-grab' && this.sculptGrabStart && event) {
+            const rect = this.renderer.domElement.getBoundingClientRect();
+            const mx = ((event.clientX - rect.left) / rect.width) * 2 - 1;
+            const my = -((event.clientY - rect.top) / rect.height) * 2 + 1;
+            const grabRay = new THREE.Raycaster();
+            grabRay.setFromCamera(new THREE.Vector2(mx, my), this.camera);
+            const grabHit = grabRay.intersectObject(this.activeObject);
+            if (grabHit.length > 0) {
+                grabDelta = grabHit[0].point.clone().sub(this.sculptGrabStart);
+            }
+        }
+
+        // For smooth brush, build adjacency
+        let adj = null;
+        if (brushType === 'sculpt-smooth') {
+            adj = this.buildAdjacency(geom);
+        }
+
+        // For flatten/scrape: compute average plane
+        let avgPos = null, avgNormal = null, vertsInRange = [];
+        if (brushType === 'sculpt-flatten' || brushType === 'sculpt-scrape') {
+            avgPos = new THREE.Vector3();
+            avgNormal = new THREE.Vector3();
+            let count = 0;
             for (let i = 0; i < positions.count; i++) {
                 const v = new THREE.Vector3().fromBufferAttribute(positions, i);
                 const dSq = v.distanceToSquared(localPoint);
                 if (dSq < radiusSq) {
-                    const falloff = Math.pow(1.0 - (dSq / radiusSq), 2);
-                    const n = new THREE.Vector3().fromBufferAttribute(geom.attributes.normal, i);
-                    
-                    let disp = 0;
-                    if (this.brushType === 'sculpt-draw') disp = this.brushStrength * falloff * 0.1;
-                    else if (this.brushType === 'sculpt-flatten') disp = -this.brushStrength * falloff * 0.1; 
-                    
-                    v.addScaledVector(n, disp);
-                    if (this.brushType === 'sculpt-smooth') v.lerp(localPoint, this.brushStrength * falloff * 0.05);
-                    positions.setXYZ(i, v.x, v.y, v.z);
+                    const n = new THREE.Vector3().fromBufferAttribute(normals, i);
+                    avgPos.add(v);
+                    avgNormal.add(n);
+                    vertsInRange.push({ idx: i, dist: Math.sqrt(dSq), pos: v, normal: n });
+                    count++;
                 }
             }
-            positions.needsUpdate = true;
+            if (count > 0) {
+                avgPos.divideScalar(count);
+                avgNormal.normalize();
+            }
         }
+
+        const tmpV = new THREE.Vector3();
+        const tmpN = new THREE.Vector3();
+
+        for (let i = 0; i < positions.count; i++) {
+            const v = tmpV.fromBufferAttribute(positions, i);
+            const dSq = v.distanceToSquared(localPoint);
+            if (dSq >= radiusSq) continue;
+            
+            const t = Math.sqrt(dSq / radiusSq);
+            // Smooth step falloff: 1 - 3t^2 + 2t^3 — much smoother than power falloff
+            const falloff = 1.0 - (3.0 * t * t - 2.0 * t * t * t);
+            if (falloff <= 0) continue;
+            
+            const n = tmpN.fromBufferAttribute(normals, i);
+            
+            if (brushType === 'sculpt-draw') {
+                // Push/pull along vertex normal with smooth falloff
+                const disp = strength * falloff * 0.12;
+                v.addScaledVector(n, disp);
+                
+            } else if (brushType === 'sculpt-smooth') {
+                // Laplacian smooth: average with connected neighbors
+                const neighbors = adj.get(i);
+                if (!neighbors || neighbors.size === 0) continue;
+                const avg = new THREE.Vector3();
+                let cnt = 0;
+                for (const ni of neighbors) {
+                    avg.add(tmpV.fromBufferAttribute(positions, ni));
+                    cnt++;
+                }
+                if (cnt > 0) {
+                    avg.divideScalar(cnt);
+                    v.lerp(avg, strength * falloff * 0.2);
+                }
+                
+            } else if (brushType === 'sculpt-flatten') {
+                // Project onto average plane
+                if (avgNormal) {
+                    const distToPlane = v.clone().sub(avgPos).dot(avgNormal);
+                    const proj = v.clone().addScaledVector(avgNormal, -distToPlane);
+                    v.lerp(proj, strength * falloff * 0.15);
+                }
+                
+            } else if (brushType === 'sculpt-inflate') {
+                // Push outward from brush center along vertex normal
+                const dir = v.clone().sub(localPoint);
+                if (dir.lengthSq() > 0.0001) dir.normalize();
+                else dir.copy(n);
+                const disp = strength * falloff * 0.15;
+                v.addScaledVector(dir, disp);
+                
+            } else if (brushType === 'sculpt-pinch') {
+                // Pull vertices toward brush center
+                const toCenter = localPoint.clone().sub(v);
+                v.lerp(localPoint, strength * falloff * 0.25);
+                
+            } else if (brushType === 'sculpt-grab') {
+                // Move vertices along grab delta (in local space)
+                if (grabDelta) {
+                    const localDelta = grabDelta.clone().applyMatrix4(invMat);
+                    v.add(localDelta.multiplyScalar(strength * falloff));
+                }
+                
+            } else if (brushType === 'sculpt-crease') {
+                // Pinch toward center + push along normal to sharpen
+                const toCenter = localPoint.clone().sub(v);
+                v.lerp(localPoint, strength * falloff * 0.15);
+                const disp = strength * falloff * 0.08;
+                v.addScaledVector(n, disp);
+                
+            } else if (brushType === 'sculpt-scrape') {
+                // Flatten to plane through brush center with surface normal
+                if (avgNormal) {
+                    const planeNormal = avgNormal;
+                    const planePoint = avgPos;
+                    const distToPlane = v.clone().sub(planePoint).dot(planeNormal);
+                    if (distToPlane > 0) {
+                        const proj = v.clone().addScaledVector(planeNormal, -distToPlane);
+                        v.lerp(proj, strength * falloff * 0.12);
+                    } else {
+                        // Below plane: push up slightly (fill behavior)
+                        v.addScaledVector(planeNormal, -distToPlane * strength * falloff * 0.05);
+                    }
+                }
+                
+            } else if (brushType === 'sculpt-fill') {
+                // Inflate but only push outward from surface, filling concavities
+                const dir = n.clone();
+                const disp = strength * falloff * 0.1;
+                v.addScaledVector(dir, disp);
+            }
+            
+            positions.setXYZ(i, v.x, v.y, v.z);
+
+            // Apply symmetry
+            if (this.symmetryAxis !== 'none') {
+                const mirrored = this.applySymmetry(v, this.symmetryAxis);
+                if (mirrored) {
+                    // Find the closest vertex to the mirrored position
+                    let bestIdx = -1;
+                    let bestDistSq = Infinity;
+                    const tmp = new THREE.Vector3();
+                    for (let j = 0; j < positions.count; j++) {
+                        const distSq = tmp.fromBufferAttribute(positions, j).distanceToSquared(mirrored);
+                        if (distSq < bestDistSq) {
+                            bestDistSq = distSq;
+                            bestIdx = j;
+                        }
+                    }
+                    if (bestIdx >= 0 && bestDistSq < 0.01) {
+                        positions.setXYZ(bestIdx, mirrored.x, mirrored.y, mirrored.z);
+                    }
+                }
+            }
+        }
+        
+        positions.needsUpdate = true;
+        geom.computeVertexNormals();
+        geom.attributes.normal.needsUpdate = true;
+        if (geom.index) geom.index.needsUpdate = true;
     }
 
     selectObject(obj) {
@@ -1541,16 +1882,28 @@ class WebBlend {
 
     updateTransformUI() {
         if(!this.activeObject) return;
-        document.getElementById('loc-x').value = this.activeObject.position.x.toFixed(2);
-        document.getElementById('loc-y').value = this.activeObject.position.y.toFixed(2);
-        document.getElementById('loc-z').value = this.activeObject.position.z.toFixed(2);
+        const x = this.activeObject.position.x.toFixed(2);
+        const y = this.activeObject.position.y.toFixed(2);
+        const z = this.activeObject.position.z.toFixed(2);
+        document.getElementById('loc-x').value = x;
+        document.getElementById('loc-y').value = y;
+        document.getElementById('loc-z').value = z;
+        const xn = document.getElementById('loc-x-num');
+        if (xn) { xn.value = x; }
+        const yn = document.getElementById('loc-y-num');
+        if (yn) { yn.value = y; }
+        const zn = document.getElementById('loc-z-num');
+        if (zn) { zn.value = z; }
     }
 
     updateMaterialUI() {
         if(!this.activeObject) return;
         if (this.activeObject.userData.isCamera) {
             const cam = this.activeObject.userData.camera;
-            document.getElementById('cam-fov').value = cam.fov;
+            const fovEl = document.getElementById('cam-fov');
+            const fovNum = document.getElementById('cam-fov-num');
+            fovEl.value = cam.fov;
+            if (fovNum) fovNum.value = cam.fov;
             document.getElementById('cam-near').value = cam.near;
             document.getElementById('cam-far').value = cam.far;
             return;
@@ -1620,6 +1973,14 @@ class WebBlend {
             this.transformControl.detach();
         }
 
+        // Brush preview visibility
+        if (!isSculpt) {
+            this.sculptIntersect = null;
+            if (this.brushPreview) this.brushPreview.visible = false;
+            if (this.brushDot) this.brushDot.visible = false;
+        }
+        document.getElementById('viewport').classList.toggle('sculpt-mode', isSculpt);
+
         this.objects.forEach(obj => { if(obj.material && !obj.userData.isReferenceImage) obj.material.wireframe = isEdit; });
         this.updateObjectUI();
     }
@@ -1671,6 +2032,54 @@ class WebBlend {
         prefGridThickness.addEventListener('change', e => { this.prefs.gridThickness = e.target.value; this.savePreferences(); });
         prefInfiniteGrid.addEventListener('change', e => { this.prefs.infiniteGrid = e.target.checked; this.savePreferences(); });
 
+        // Camera Speed slider
+        const prefCamSpeed = document.getElementById('pref-cam-speed');
+        const prefCamSpeedVal = document.getElementById('pref-cam-speed-val');
+        prefCamSpeed.value = this.prefs.cameraSpeed || 5;
+        prefCamSpeedVal.textContent = prefCamSpeed.value;
+        prefCamSpeed.addEventListener('input', e => {
+            this.prefs.cameraSpeed = parseFloat(e.target.value);
+            prefCamSpeedVal.textContent = e.target.value;
+            this.savePreferences();
+        });
+
+        // Keybinding UI
+        const codeToName = {
+            'KeyW': 'W', 'KeyA': 'A', 'KeyS': 'S', 'KeyD': 'D',
+            'KeyQ': 'Q', 'KeyE': 'E', 'KeyZ': 'Z', 'KeyX': 'X',
+            'ShiftLeft': 'Shift', 'ShiftRight': 'Shift',
+            'ArrowUp': '↑', 'ArrowDown': '↓', 'ArrowLeft': '←', 'ArrowRight': '→',
+            'Space': 'Space', 'ControlLeft': 'Ctrl', 'ControlRight': 'Ctrl',
+            'AltLeft': 'Alt', 'AltRight': 'Alt'
+        };
+        document.querySelectorAll('.keybind-btn').forEach(btn => {
+            const action = btn.dataset.action;
+            const keys = this.prefs.keybinds[action];
+            if (keys) btn.textContent = codeToName[keys[0]] || keys[0];
+            btn.addEventListener('click', () => {
+                if (btn.classList.contains('recording')) return;
+                btn.classList.add('recording');
+                btn.textContent = '...';
+                const onKey = (e) => {
+                    e.preventDefault();
+                    btn.classList.remove('recording');
+                    document.removeEventListener('keydown', onKey);
+                    const code = e.code;
+                    if (code.startsWith('Key') || code.startsWith('Digit') || code.startsWith('Arrow') ||
+                        code === 'ShiftLeft' || code === 'ShiftRight' || code === 'Space' ||
+                        code === 'ControlLeft' || code === 'ControlRight' ||
+                        code === 'AltLeft' || code === 'AltRight') {
+                        this.prefs.keybinds[action] = [code];
+                        btn.textContent = codeToName[code] || code;
+                        this.savePreferences();
+                    } else {
+                        btn.textContent = codeToName[this.prefs.keybinds[action][0]] || this.prefs.keybinds[action][0];
+                    }
+                };
+                document.addEventListener('keydown', onKey);
+            });
+        });
+
         document.getElementById('btn-add-folder').addEventListener('click', () => this.createFolder());
 
         // Playback controller button events
@@ -1694,6 +2103,22 @@ class WebBlend {
 
         const slider = document.getElementById('timeline-slider');
         slider.addEventListener('input', e => this.updateFrame(parseInt(e.target.value)));
+        slider.min = 0;
+        slider.max = 250;
+        slider.value = 0;
+
+        // Add Keyframe button
+        document.getElementById('btn-add-keyframe')?.addEventListener('click', () => {
+            if (!this.activeObject) { this.showNotification('No object selected'); return; }
+            this.recordTransformKeyframe(this.activeObject);
+            if (this.activeObject.material) this.recordMaterialKeyframe(this.activeObject);
+            this.showNotification(`Keyframe inserted on Frame ${this.currentFrame}`);
+        });
+
+        // Frame number input
+        document.getElementById('anim-current-frame').addEventListener('change', e => {
+            this.updateFrame(parseInt(e.target.value));
+        });
 
         const autoKeyBtn = document.getElementById('btn-auto-key');
         autoKeyBtn.addEventListener('click', () => {
@@ -1708,12 +2133,21 @@ class WebBlend {
         animFpsInput.value = this.prefs.animFps || 30;
 
         const animStartInput = document.getElementById('anim-start-frame');
-        animStartInput.addEventListener('change', e => { this.startFrame = parseInt(e.target.value); slider.min = this.startFrame; });
-        this.startFrame = parseInt(animStartInput.value);
+        animStartInput.addEventListener('change', e => {
+            this.startFrame = parseInt(e.target.value);
+            slider.min = this.startFrame;
+            if (this.currentFrame < this.startFrame) this.updateFrame(this.startFrame);
+        });
+        this.startFrame = parseInt(animStartInput.value) || 0;
 
         const animEndInput = document.getElementById('anim-end-frame');
-        animEndInput.addEventListener('change', e => { this.endFrame = parseInt(e.target.value); slider.max = this.endFrame; });
-        this.endFrame = parseInt(animEndInput.value);
+        animEndInput.addEventListener('change', e => {
+            this.endFrame = parseInt(e.target.value);
+            slider.max = this.endFrame;
+            if (this.currentFrame > this.endFrame) this.updateFrame(this.endFrame);
+        });
+        this.endFrame = parseInt(animEndInput.value) || 250;
+        slider.max = this.endFrame;
 
         // View Through Camera Event listeners
         const toggleCameraView = (e) => {
@@ -1724,10 +2158,9 @@ class WebBlend {
         document.getElementById('btn-camera-view').addEventListener('click', toggleCameraView);
         document.getElementById('sidebar-btn-cam-view').addEventListener('click', toggleCameraView);
 
-        document.getElementById('cam-fov').addEventListener('input', e => {
-            if (this.activeObject && this.activeObject.userData.isCamera) {
-                const fov = parseFloat(e.target.value);
-                this.activeObject.userData.camera.fov = fov;
+        bindSlider('cam-fov', 'cam-fov-num', v => {
+            if (this.activeObject?.userData.isCamera) {
+                this.activeObject.userData.camera.fov = v;
                 this.activeObject.userData.camera.updateProjectionMatrix();
                 if (this.isAutoKeyActive) this.recordTransformKeyframe(this.activeObject);
             }
@@ -1871,13 +2304,7 @@ class WebBlend {
                 swappedMaterials.forEach(item => { item.child.material = item.original; });
 
                 const blob = new Blob([gltf], { type: 'application/octet-stream' });
-                const link = document.createElement('a'); 
-                link.style.display = 'none';
-                link.href = URL.createObjectURL(blob); 
-                link.download = 'scene.glb'; 
-                document.body.appendChild(link);
-                link.click();
-                document.body.removeChild(link);
+                this.downloadBlob(blob, 'scene.glb');
             }, (err) => {
                 this.scene.traverse(child => {
                     if (child.userData.isCameraHelperMesh) child.visible = true;
@@ -1896,14 +2323,7 @@ class WebBlend {
             this.scene.traverse(child => {
                 if (child.userData.isCameraHelperMesh) child.visible = true;
             });
-            const blob = new Blob([result], { type: 'text/plain' });
-            const link = document.createElement('a'); 
-            link.style.display = 'none';
-            link.href = URL.createObjectURL(blob); 
-            link.download = 'scene.obj'; 
-            document.body.appendChild(link);
-            link.click();
-            document.body.removeChild(link);
+            this.downloadBlob(new Blob([result], { type: 'text/plain' }), 'scene.obj');
         });
 
         document.getElementById('menu-render-prev').addEventListener('click', (e) => { e.preventDefault(); this.executeRenderImage(false); });
@@ -1961,49 +2381,70 @@ class WebBlend {
             });
         });
 
-        const updateRad = (val) => { this.brushRadius = parseFloat(val); document.getElementById('top-radius').value = val; document.getElementById('side-radius').value = val; };
+        const updateRad = (val) => { this.brushRadius = parseFloat(val); document.getElementById('top-radius').value = val; document.getElementById('side-radius').value = val; if(document.getElementById('side-radius-num')) document.getElementById('side-radius-num').value = val; };
         document.getElementById('top-radius').addEventListener('input', e => updateRad(e.target.value));
         document.getElementById('side-radius').addEventListener('input', e => updateRad(e.target.value));
+        document.getElementById('side-radius-num')?.addEventListener('input', e => updateRad(e.target.value));
 
-        const updateStr = (val) => { this.brushStrength = parseFloat(val); document.getElementById('top-strength').value = val; document.getElementById('side-strength').value = val; };
+        const updateStr = (val) => { this.brushStrength = parseFloat(val); document.getElementById('top-strength').value = val; document.getElementById('side-strength').value = val; if(document.getElementById('side-strength-num')) document.getElementById('side-strength-num').value = val; };
         document.getElementById('top-strength').addEventListener('input', e => updateStr(e.target.value));
         document.getElementById('side-strength').addEventListener('input', e => updateStr(e.target.value));
+        document.getElementById('side-strength-num')?.addEventListener('input', e => updateStr(e.target.value));
 
-        document.getElementById('light-dir-int').addEventListener('input', e => this.lights.directional.intensity = parseFloat(e.target.value));
-        document.getElementById('light-amb-int').addEventListener('input', e => this.lights.ambient.intensity = parseFloat(e.target.value));
+        // Sculpt symmetry
+        document.getElementById('sculpt-symmetry')?.addEventListener('change', e => { this.symmetryAxis = e.target.value; });
+
+        // Subdivide button
+        document.getElementById('btn-subdivide')?.addEventListener('click', () => { this.subdivideActiveMesh(); });
+
+        bindSlider('light-dir-int', 'light-dir-int-num', v => { this.lights.directional.intensity = v; });
+        bindSlider('light-amb-int', 'light-amb-int-num', v => { this.lights.ambient.intensity = v; });
         document.getElementById('light-shadows').addEventListener('change', e => { 
             this.renderer.shadowMap.enabled = e.target.checked; 
             this.scene.traverse(child => { if(child.isMesh) { child.castShadow = e.target.checked; child.receiveShadow = e.target.checked; }});
         });
 
+        // Helper: sync slider + number input
+        const bindSlider = (sliderId, numId, onChange) => {
+            const slider = document.getElementById(sliderId);
+            const num = document.getElementById(numId);
+            if (!slider || !num) return;
+            slider.addEventListener('input', () => { num.value = slider.value; onChange(parseFloat(slider.value)); });
+            num.addEventListener('input', () => { slider.value = num.value; onChange(parseFloat(num.value)); });
+        };
+
+        // Transform sliders
+        const updatePos = (axis) => (v) => { if (this.activeObject) { this.activeObject.position[axis] = v; } };
+        bindSlider('loc-x', 'loc-x-num', updatePos('x'));
+        bindSlider('loc-y', 'loc-y-num', updatePos('y'));
+        bindSlider('loc-z', 'loc-z-num', updatePos('z'));
+
         document.getElementById('mat-color').addEventListener('input', e => { if(this.activeObject && this.activeObject.material) this.activeObject.material.color.set(e.target.value); });
-        document.getElementById('mat-roughness').addEventListener('input', e => { if(this.activeObject && this.activeObject.material) this.activeObject.material.roughness = parseFloat(e.target.value); });
-        document.getElementById('mat-metallic').addEventListener('input', e => { if(this.activeObject && this.activeObject.material) this.activeObject.material.metalness = parseFloat(e.target.value); });
+        bindSlider('mat-roughness', 'mat-roughness-num', v => { if(this.activeObject?.material) this.activeObject.material.roughness = v; });
+        bindSlider('mat-metallic', 'mat-metallic-num', v => { if(this.activeObject?.material) this.activeObject.material.metalness = v; });
         document.getElementById('mat-emissive').addEventListener('input', e => { if(this.activeObject && this.activeObject.material) { this.activeObject.material.emissive.set(e.target.value); this.activeObject.material.emissiveIntensity = 1.0; }});
-        document.getElementById('mat-opacity').addEventListener('input', e => { 
-            if(this.activeObject && this.activeObject.material) {
-                const val = parseFloat(e.target.value);
-                this.activeObject.material.opacity = val;
-                this.activeObject.material.transparent = val < 1.0;
+        bindSlider('mat-opacity', 'mat-opacity-num', v => {
+            if (this.activeObject?.material) {
+                this.activeObject.material.opacity = v;
+                this.activeObject.material.transparent = v < 1.0;
                 this.activeObject.material.needsUpdate = true;
             }
         });
-        document.getElementById('mat-transmission').addEventListener('input', e => { 
-            if(this.activeObject && this.activeObject.material && this.activeObject.material.transmission !== undefined) {
-                this.activeObject.material.transmission = parseFloat(e.target.value);
+        bindSlider('mat-transmission', 'mat-transmission-num', v => {
+            if (this.activeObject?.material && this.activeObject.material.transmission !== undefined) {
+                this.activeObject.material.transmission = v;
                 this.activeObject.material.needsUpdate = true;
             }
         });
-        document.getElementById('mat-ior').addEventListener('input', e => { 
-            if(this.activeObject && this.activeObject.material && this.activeObject.material.ior !== undefined) {
-                this.activeObject.material.ior = parseFloat(e.target.value);
+        bindSlider('mat-ior', 'mat-ior-num', v => {
+            if (this.activeObject?.material && this.activeObject.material.ior !== undefined) {
+                this.activeObject.material.ior = v;
             }
         });
-        document.getElementById('mat-iou').addEventListener('input', e => { 
-            if(this.activeObject && this.activeObject.material && this.activeObject.material.userData) {
-                const val = parseFloat(e.target.value);
-                this.activeObject.material.userData.iou = val;
-                this.activeObject.material.clearcoat = val; 
+        bindSlider('mat-iou', 'mat-iou-num', v => {
+            if (this.activeObject?.material && this.activeObject.material.userData) {
+                this.activeObject.material.userData.iou = v;
+                this.activeObject.material.clearcoat = v;
                 this.activeObject.material.needsUpdate = true;
             }
         });
@@ -2118,15 +2559,12 @@ class WebBlend {
             this.transformControl.attach(attachedObj);
         }
 
-        const link = document.createElement('a');
-        link.style.display = 'none';
-        link.href = dataURL;
-        link.download = `render_${new Date().getTime()}.png`;
-        
-        // Append anchor strictly to document body to trigger download context safely
-        document.body.appendChild(link);
-        link.click();
-        document.body.removeChild(link);
+        const a = document.createElement('a');
+        a.href = dataURL;
+        a.download = `render_${new Date().getTime()}.png`;
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
     }
 
     // --- 🎞️ CLIENT-SIDE MP4 VIDEO EXPORT ---
@@ -2173,14 +2611,7 @@ class WebBlend {
 
         recorder.onstop = () => {
             const blob = new Blob(chunks, { type: 'video/mp4' });
-            const link = document.createElement('a');
-            link.style.display = 'none';
-            link.href = URL.createObjectURL(blob);
-            link.download = `render_${new Date().getTime()}.mp4`;
-            
-            document.body.appendChild(link);
-            link.click();
-            document.body.removeChild(link);
+            this.downloadBlob(blob, `render_${new Date().getTime()}.mp4`);
 
             // Restore active viewport properties and entities
             this.grid.visible = wasGridVisible;
@@ -2213,10 +2644,34 @@ class WebBlend {
         processFrameStep();
     }
 
-    render() {
+    render(time) {
+        const dt = Math.min((time - (this._lastRenderTime || time)) / 1000, 0.05);
+        this._lastRenderTime = time;
+
+        // WASD + QE Camera Fly Movement
+        if (this.orbit.enabled) {
+            const kb = this.prefs.keybinds;
+            const speed = this.prefs.cameraSpeed * dt * (this.keys.has(kb.boost[0]) || this.keys.has(kb.boost[1]) ? 3 : 1);
+            const forward = new THREE.Vector3();
+            this.camera.getWorldDirection(forward);
+            forward.y = 0;
+            if (forward.lengthSq() > 0) forward.normalize();
+            const right = new THREE.Vector3();
+            right.crossVectors(forward, new THREE.Vector3(0, 1, 0)).normalize();
+
+            let moved = false;
+            const isDown = (action) => this.keys.has(kb[action][0]) || (kb[action][1] && this.keys.has(kb[action][1]));
+            if (isDown('forward')) { this.camera.position.addScaledVector(forward, speed); this.orbit.target.addScaledVector(forward, speed); moved = true; }
+            if (isDown('backward')) { this.camera.position.addScaledVector(forward, -speed); this.orbit.target.addScaledVector(forward, -speed); moved = true; }
+            if (isDown('left')) { this.camera.position.addScaledVector(right, -speed); this.orbit.target.addScaledVector(right, -speed); moved = true; }
+            if (isDown('right')) { this.camera.position.addScaledVector(right, speed); this.orbit.target.addScaledVector(right, speed); moved = true; }
+            if (isDown('up')) { this.camera.position.y += speed; this.orbit.target.y += speed; moved = true; }
+            if (isDown('down')) { this.camera.position.y -= speed; this.orbit.target.y -= speed; moved = true; }
+            if (moved) this.orbit.update();
+        }
+
         this.orbit.update();
 
-        // 🌐 Infinite Grid Mode: Shift helper position horizontally under camera projections
         if (this.prefs.infiniteGrid && this.grid) {
             this.grid.position.x = Math.round(this.camera.position.x / 10) * 10;
             this.grid.position.z = Math.round(this.camera.position.z / 10) * 10;
@@ -2224,8 +2679,12 @@ class WebBlend {
             this.grid.position.set(0, -0.01, 0);
         }
 
+        // Update ViewHelper animation
+        if (this.viewHelper.animating) this.viewHelper.update(dt);
+
         const renderingCam = this.isViewingThroughCamera && this.activeCamera ? this.activeCamera : this.camera;
         this.renderer.render(this.scene, renderingCam);
+        this.viewHelper.render(this.renderer);
     }
 }
 

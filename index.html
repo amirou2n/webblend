@@ -95,6 +95,12 @@
                 <button class="tool-btn sculpt-tool active hidden" data-tool="sculpt-draw" title="Draw Brush">🖌️</button>
                 <button class="tool-btn sculpt-tool hidden" data-tool="sculpt-smooth" title="Smooth Brush">💧</button>
                 <button class="tool-btn sculpt-tool hidden" data-tool="sculpt-flatten" title="Flatten Brush">🔨</button>
+                <button class="tool-btn sculpt-tool hidden" data-tool="sculpt-inflate" title="Inflate Brush">🎈</button>
+                <button class="tool-btn sculpt-tool hidden" data-tool="sculpt-pinch" title="Pinch Brush">🥢</button>
+                <button class="tool-btn sculpt-tool hidden" data-tool="sculpt-grab" title="Grab Brush">✊</button>
+                <button class="tool-btn sculpt-tool hidden" data-tool="sculpt-crease" title="Crease Brush">🗡️</button>
+                <button class="tool-btn sculpt-tool hidden" data-tool="sculpt-scrape" title="Scrape Brush">🧹</button>
+                <button class="tool-btn sculpt-tool hidden" data-tool="sculpt-fill" title="Fill Brush">🪣</button>
             </aside>
 
             <!-- Center column: Contains Viewport on top and Timeline scrubber dock below -->
@@ -113,6 +119,7 @@
                         <button class="timeline-control-btn" id="btn-anim-next" title="Next Frame">⏵</button>
                         <button class="timeline-control-btn" id="btn-anim-last" title="Jump to End">⏭</button>
 
+                        <button id="btn-add-keyframe" class="timeline-control-btn" title="Insert Keyframe (I)">🔑 Add Key</button>
                         <button id="btn-auto-key" class="timeline-control-btn" style="color: #ff5555; font-weight: bold;" title="Toggle Auto Keyframe Mode">🔴 Auto Key</button>
 
                         <div class="timeline-numeric-input">
@@ -178,15 +185,15 @@
 
                         <div class="panel obj-tool">
                             <h3>Transform</h3>
-                            <div class="prop-group"><label>Loc X</label><input type="number" id="loc-x" step="0.1" value="0"></div>
-                            <div class="prop-group"><label>Loc Y</label><input type="number" id="loc-y" step="0.1" value="0"></div>
-                            <div class="prop-group"><label>Loc Z</label><input type="number" id="loc-z" step="0.1" value="0"></div>
+                            <div class="prop-group"><label>Loc X</label><input type="range" id="loc-x" min="-50" max="50" step="0.1" value="0"><input type="number" id="loc-x-num" class="slider-num" step="0.1" value="0"></div>
+                            <div class="prop-group"><label>Loc Y</label><input type="range" id="loc-y" min="-50" max="50" step="0.1" value="0"><input type="number" id="loc-y-num" class="slider-num" step="0.1" value="0"></div>
+                            <div class="prop-group"><label>Loc Z</label><input type="range" id="loc-z" min="-50" max="50" step="0.1" value="0"><input type="number" id="loc-z-num" class="slider-num" step="0.1" value="0"></div>
                         </div>
 
                         <!-- 🎥 Camera Properties Section -->
                         <div class="panel obj-tool camera-only hidden">
                             <h3>Camera Lens Properties</h3>
-                            <div class="prop-group"><label>Field of View</label><input type="number" id="cam-fov" min="10" max="150" step="1" value="50"></div>
+                            <div class="prop-group"><label>Field of View</label><input type="range" id="cam-fov" min="10" max="150" step="1" value="50"><input type="number" id="cam-fov-num" class="slider-num" min="10" max="150" step="1" value="50"></div>
                             <div class="prop-group"><label>Near Clip</label><input type="number" id="cam-near" min="0.01" max="10" step="0.05" value="0.1"></div>
                             <div class="prop-group"><label>Far Clip</label><input type="number" id="cam-far" min="10" max="10000" step="10" value="1000"></div>
                             <button id="sidebar-btn-cam-view" class="ui-btn" style="width: 100%; margin-top: 5px;">🎥 View Through Camera</button>
@@ -212,26 +219,33 @@
                         <div class="panel obj-tool material-panel">
                             <h3>Material Properties</h3>
                             <div class="prop-group"><label>Base Color</label><input type="color" id="mat-color" value="#a38c7a"></div>
-                            <div class="prop-group"><label>Roughness</label><input type="number" id="mat-roughness" min="0" max="1" step="0.05" value="0.6"></div>
-                            <div class="prop-group"><label>Metallic</label><input type="number" id="mat-metallic" min="0" max="1" step="0.05" value="0.1"></div>
+                            <div class="prop-group"><label>Roughness</label><input type="range" id="mat-roughness" min="0" max="1" step="0.01" value="0.6"><input type="number" id="mat-roughness-num" class="slider-num" min="0" max="1" step="0.01" value="0.6"></div>
+                            <div class="prop-group"><label>Metallic</label><input type="range" id="mat-metallic" min="0" max="1" step="0.01" value="0.1"><input type="number" id="mat-metallic-num" class="slider-num" min="0" max="1" step="0.01" value="0.1"></div>
                             <div class="prop-group"><label>Emission</label><input type="color" id="mat-emissive" value="#000000"></div>
-                            <div class="prop-group"><label>Opacity</label><input type="number" id="mat-opacity" min="0" max="1" step="0.05" value="1.0"></div>
-                            <div class="prop-group"><label>Transmission</label><input type="number" id="mat-transmission" min="0" max="1" step="0.05" value="0.0" title="Glass effect"></div>
-                            <div class="prop-group"><label>IOR</label><input type="number" id="mat-ior" min="1.0" max="2.5" step="0.05" value="1.5" title="Index of Refraction"></div>
-                            <div class="prop-group"><label>IOU</label><input type="number" id="mat-iou" min="0" max="1" step="0.05" value="0.0" title="IOU Property"></div>
+                            <div class="prop-group"><label>Opacity</label><input type="range" id="mat-opacity" min="0" max="1" step="0.01" value="1.0"><input type="number" id="mat-opacity-num" class="slider-num" min="0" max="1" step="0.01" value="1.0"></div>
+                            <div class="prop-group"><label>Transmission</label><input type="range" id="mat-transmission" min="0" max="1" step="0.01" value="0.0" title="Glass effect"><input type="number" id="mat-transmission-num" class="slider-num" min="0" max="1" step="0.01" value="0.0"></div>
+                            <div class="prop-group"><label>IOR</label><input type="range" id="mat-ior" min="1.0" max="2.5" step="0.01" value="1.5" title="Index of Refraction"><input type="number" id="mat-ior-num" class="slider-num" min="1.0" max="2.5" step="0.01" value="1.5"></div>
+                            <div class="prop-group"><label>Clearcoat</label><input type="range" id="mat-iou" min="0" max="1" step="0.01" value="0.0" title="Clearcoat"><input type="number" id="mat-iou-num" class="slider-num" min="0" max="1" step="0.01" value="0.0"></div>
                         </div>
 
                         <div class="panel obj-tool">
                             <h3>Scene Lighting</h3>
-                            <div class="prop-group"><label>Directional Int.</label><input type="number" id="light-dir-int" min="0" step="0.1" value="2.0"></div>
-                            <div class="prop-group"><label>Ambient Int.</label><input type="number" id="light-amb-int" min="0" step="0.1" value="0.4"></div>
+                            <div class="prop-group"><label>Directional Int.</label><input type="range" id="light-dir-int" min="0" max="20" step="0.1" value="2.0"><input type="number" id="light-dir-int-num" class="slider-num" min="0" max="20" step="0.1" value="2.0"></div>
+                            <div class="prop-group"><label>Ambient Int.</label><input type="range" id="light-amb-int" min="0" max="5" step="0.1" value="0.4"><input type="number" id="light-amb-int-num" class="slider-num" min="0" max="5" step="0.1" value="0.4"></div>
                             <div class="prop-group"><label>Shadows</label><input type="checkbox" id="light-shadows" checked></div>
                         </div>
 
                         <div class="panel sculpt-only hidden">
                             <h3>Brush Settings</h3>
-                            <div class="prop-group"><label>Radius</label><input type="number" id="side-radius" step="0.1" value="1.0"></div>
-                            <div class="prop-group"><label>Strength</label><input type="number" id="side-strength" step="0.01" value="0.4"></div>
+                            <div class="prop-group"><label>Radius</label><input type="range" id="side-radius" min="0.05" max="5" step="0.05" value="1.0"><input type="number" id="side-radius-num" class="slider-num" min="0.05" max="5" step="0.05" value="1.0"></div>
+                            <div class="prop-group"><label>Strength</label><input type="range" id="side-strength" min="0" max="1" step="0.01" value="0.4"><input type="number" id="side-strength-num" class="slider-num" min="0" max="1" step="0.01" value="0.4"></div>
+                            <div class="prop-group"><label>Symmetry</label><select id="sculpt-symmetry">
+                                <option value="none">None</option>
+                                <option value="x">X Axis</option>
+                                <option value="y">Y Axis</option>
+                                <option value="z">Z Axis</option>
+                            </select></div>
+                            <button id="btn-subdivide" class="ui-btn" style="margin-top:6px;width:100%;">Subdivide</button>
                         </div>
                     </div>
                 </div>
@@ -264,6 +278,14 @@
                             <option value="active_scene_camera">Active Scene Camera</option>
                             <option value="current_viewport">Current Viewport</option>
                         </select>
+                    </div>
+                </div>
+                <div class="modal-section">
+                    <h4>Camera Controls</h4>
+                    <div class="prop-group">
+                        <label>Fly Speed</label>
+                        <input type="range" id="pref-cam-speed" min="1" max="20" step="0.5" value="5">
+                        <span id="pref-cam-speed-val" style="margin-left: 6px; min-width: 30px;">5</span>
                     </div>
                 </div>
                 <!-- 🌐 Grid Customization Preferences -->
@@ -315,19 +337,23 @@
                     </div>
                 </div>
                 <div class="modal-section">
-                    <h4>Keybinds Overview</h4>
-                    <p>
-                        <b>G</b> : Move<br>
-                        <b>R</b> : Rotate<br>
-                        <b>S</b> : Scale<br>
-                        <b>I</b> : Insert Keyframe manually<br>
-                        <b>A</b> : Select All / None<br>
-                        <b>Ctrl + Numpad 0</b> : Toggle Active Camera View<br>
-                        <b>Ctrl + Z</b> : Undo Action<br>
-                        <b>Ctrl + Y</b> : Redo Action<br>
-                        <b>Ctrl + C</b> : Copy Object<br>
-                        <b>Ctrl + V</b> : Paste Object<br>
-                        <b>Delete/Bksp</b> : Delete Object
+                    <h4>Camera Fly Keybinds (click to rebind)</h4>
+                    <div class="prop-group"><label>Move Forward</label><button class="keybind-btn" data-action="forward">W</button></div>
+                    <div class="prop-group"><label>Move Backward</label><button class="keybind-btn" data-action="backward">S</button></div>
+                    <div class="prop-group"><label>Move Left</label><button class="keybind-btn" data-action="left">A</button></div>
+                    <div class="prop-group"><label>Move Right</label><button class="keybind-btn" data-action="right">D</button></div>
+                    <div class="prop-group"><label>Move Up</label><button class="keybind-btn" data-action="up">Q</button></div>
+                    <div class="prop-group"><label>Move Down</label><button class="keybind-btn" data-action="down">E</button></div>
+                    <div class="prop-group"><label>Boost Speed</label><button class="keybind-btn" data-action="boost">Shift</button></div>
+                </div>
+                <div class="modal-section">
+                    <h4>Other Keybinds</h4>
+                    <p style="font-size: 10px; line-height: 1.8;">
+                        <b>G</b> : Move &nbsp; <b>R</b> : Rotate &nbsp; <b>S</b> : Scale<br>
+                        <b>I</b> : Insert Keyframe &nbsp; <b>A</b> : Select All/None<br>
+                        <b>Ctrl+Z</b> : Undo &nbsp; <b>Ctrl+Y</b> : Redo<br>
+                        <b>Ctrl+C</b> : Copy &nbsp; <b>Ctrl+V</b> : Paste<br>
+                        <b>Delete/Backspace</b> : Delete &nbsp; <b>Ctrl+Numpad0</b> : Camera View
                     </p>
                 </div>
             </div>
