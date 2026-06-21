@@ -2645,11 +2645,10 @@ class WebBlend {
     }
 
     render(time) {
-        // Debug: adding back orbit update only
+        // Debug: test orbit update alone
         this.orbit.update();
         if (this.grid) this.grid.position.set(0, -0.01, 0);
         this.renderer.render(this.scene, this.camera);
-        this.viewHelper.render(this.renderer);
     }
 }
 
