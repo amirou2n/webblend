@@ -2397,13 +2397,6 @@ class WebBlend {
         // Subdivide button
         document.getElementById('btn-subdivide')?.addEventListener('click', () => { this.subdivideActiveMesh(); });
 
-        bindSlider('light-dir-int', 'light-dir-int-num', v => { this.lights.directional.intensity = v; });
-        bindSlider('light-amb-int', 'light-amb-int-num', v => { this.lights.ambient.intensity = v; });
-        document.getElementById('light-shadows').addEventListener('change', e => { 
-            this.renderer.shadowMap.enabled = e.target.checked; 
-            this.scene.traverse(child => { if(child.isMesh) { child.castShadow = e.target.checked; child.receiveShadow = e.target.checked; }});
-        });
-
         // Helper: sync slider + number input
         const bindSlider = (sliderId, numId, onChange) => {
             const slider = document.getElementById(sliderId);
@@ -2412,6 +2405,13 @@ class WebBlend {
             slider.addEventListener('input', () => { num.value = slider.value; onChange(parseFloat(slider.value)); });
             num.addEventListener('input', () => { slider.value = num.value; onChange(parseFloat(num.value)); });
         };
+
+        bindSlider('light-dir-int', 'light-dir-int-num', v => { this.lights.directional.intensity = v; });
+        bindSlider('light-amb-int', 'light-amb-int-num', v => { this.lights.ambient.intensity = v; });
+        document.getElementById('light-shadows').addEventListener('change', e => { 
+            this.renderer.shadowMap.enabled = e.target.checked; 
+            this.scene.traverse(child => { if(child.isMesh) { child.castShadow = e.target.checked; child.receiveShadow = e.target.checked; }});
+        });
 
         // Transform sliders
         const updatePos = (axis) => (v) => { if (this.activeObject) { this.activeObject.position[axis] = v; } };
