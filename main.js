@@ -1918,10 +1918,10 @@ class WebBlend {
         }
         if (!this.activeObject.material) return;
         const mat = this.activeObject.material;
-        document.getElementById('mat-color').value = '#' + mat.color.getHexString();
-        document.getElementById('mat-roughness').value = mat.roughness;
-        document.getElementById('mat-metallic').value = mat.metalness || 0;
-        document.getElementById('mat-emissive').value = '#' + mat.emissive.getHexString();
+        if (mat.color) document.getElementById('mat-color').value = '#' + mat.color.getHexString();
+        if (mat.roughness !== undefined) document.getElementById('mat-roughness').value = mat.roughness;
+        if (mat.metalness !== undefined) document.getElementById('mat-metallic').value = mat.metalness;
+        if (mat.emissive) document.getElementById('mat-emissive').value = '#' + mat.emissive.getHexString();
         document.getElementById('mat-opacity').value = mat.opacity;
         if(mat.transmission !== undefined) document.getElementById('mat-transmission').value = mat.transmission;
         if(mat.ior !== undefined) document.getElementById('mat-ior').value = mat.ior;
