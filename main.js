@@ -2645,45 +2645,10 @@ class WebBlend {
     }
 
     render(time) {
-        const dt = Math.min((time - (this._lastRenderTime || time)) / 1000, 0.05);
-        this._lastRenderTime = time;
-
-        // WASD + QE Camera Fly Movement
-        if (this.orbit.enabled) {
-            const kb = this.prefs.keybinds;
-            const speed = this.prefs.cameraSpeed * dt * (this.keys.has(kb.boost[0]) || this.keys.has(kb.boost[1]) ? 3 : 1);
-            const forward = new THREE.Vector3();
-            this.camera.getWorldDirection(forward);
-            forward.y = 0;
-            if (forward.lengthSq() > 0) forward.normalize();
-            const right = new THREE.Vector3();
-            right.crossVectors(forward, new THREE.Vector3(0, 1, 0)).normalize();
-
-            let moved = false;
-            const isDown = (action) => this.keys.has(kb[action][0]) || (kb[action][1] && this.keys.has(kb[action][1]));
-            if (isDown('forward')) { this.camera.position.addScaledVector(forward, speed); this.orbit.target.addScaledVector(forward, speed); moved = true; }
-            if (isDown('backward')) { this.camera.position.addScaledVector(forward, -speed); this.orbit.target.addScaledVector(forward, -speed); moved = true; }
-            if (isDown('left')) { this.camera.position.addScaledVector(right, -speed); this.orbit.target.addScaledVector(right, -speed); moved = true; }
-            if (isDown('right')) { this.camera.position.addScaledVector(right, speed); this.orbit.target.addScaledVector(right, speed); moved = true; }
-            if (isDown('up')) { this.camera.position.y += speed; this.orbit.target.y += speed; moved = true; }
-            if (isDown('down')) { this.camera.position.y -= speed; this.orbit.target.y -= speed; moved = true; }
-            if (moved) this.orbit.update();
-        }
-
+        // Debug: adding back orbit update only
         this.orbit.update();
-
-        if (this.prefs.infiniteGrid && this.grid) {
-            this.grid.position.x = Math.round(this.camera.position.x / 10) * 10;
-            this.grid.position.z = Math.round(this.camera.position.z / 10) * 10;
-        } else if (this.grid) {
-            this.grid.position.set(0, -0.01, 0);
-        }
-
-        // Update ViewHelper animation
-        if (this.viewHelper.animating) this.viewHelper.update(dt);
-
-        const renderingCam = this.isViewingThroughCamera && this.activeCamera ? this.activeCamera : this.camera;
-        this.renderer.render(this.scene, renderingCam);
+        if (this.grid) this.grid.position.set(0, -0.01, 0);
+        this.renderer.render(this.scene, this.camera);
         this.viewHelper.render(this.renderer);
     }
 }
